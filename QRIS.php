@@ -11,7 +11,7 @@ class qris{
             !(is_null($to_date)     || (bool) preg_match('/\d{4,}-\d{2,}-\d{2,}/',$to_date))
         ) throw new \Exception("Harap input tanggal dengan format yang benar.\neg: {$today}", 1);
         if(is_int($limit) && !($limit >= 10 && $limit <=300)) throw new \Exception("Harap input limit dengan benar, min 10 & max 300", 1);
-        if(!is_int($filter) && is_null($filter)) throw new \Exception("Harap input Nominal dengan bilangan bulat, eg: 100000", 1);
+        if(!(is_null($filter) || is_int($filter))) throw new \Exception("Harap input Nominal dengan bilangan bulat, eg: 100000", 1);
         
         // store data
         $this->today = $today;
