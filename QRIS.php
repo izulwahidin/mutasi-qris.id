@@ -26,15 +26,15 @@ class qris{
     }
 
     public function mutasi(){
+        $try = 0;
         relogin:
         $this->url = 'https://m.qris.id/kontenr.php?idir=pages/historytrx.php';
         $this->data = $this->filter_data();
 
         $res = $this->request();
         
-        $count = 0;
         if(!preg_match("/logout/",$res)){
-            $count += 1;
+            $try += 1;
             if($count > 3) throw new \Exception("Gagal login setelah 3x percobaan", 1);
 
             $this->login();
