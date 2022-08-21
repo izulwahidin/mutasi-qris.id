@@ -35,7 +35,7 @@ class qris{
         
         if(!preg_match("/logout/",$res)){
             $try += 1;
-            if($count > 3) throw new \Exception("Gagal login setelah 3x percobaan", 1);
+            if($try > 3) throw new \Exception("Gagal login setelah 3x percobaan", 1);
 
             $this->login();
             goto relogin;
