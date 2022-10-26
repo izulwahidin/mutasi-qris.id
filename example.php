@@ -1,5 +1,5 @@
 <?php
-require_once('QRIS.php');
+require_once('src/QRIS.php');
 use wahidin\mutasi\qris as wQris;
 
 try {
