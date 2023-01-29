@@ -1,8 +1,10 @@
-<?php namespace wahidin\mutasi;
-class qris{
+<?php namespace Wahidin\Mutasi;
+use Symfony\Component\DomCrawler\Crawler;
+
+class Qris{
     private $user, $pass, $cookie, $today, $from_date, $to_date, $limit, $filter;
 
-    public function __construct($user, $pass, $from_date = null, $to_date = null, $limit = 20, $filter = null){
+    public function __construct($user, $pass, $filter, $from_date = null, $to_date = null, $limit = 20){
         $today = date('Y-m-d',strtotime('today'));
 
         // check data
@@ -11,16 +13,16 @@ class qris{
             !(is_null($to_date)     || (bool) preg_match('/\d{4,}-\d{2,}-\d{2,}/',$to_date))
         ) throw new \Exception("Harap input tanggal dengan format yang benar.\neg: {$today}", 1);
         if(is_int($limit) && !($limit >= 10 && $limit <=300)) throw new \Exception("Harap input limit dengan benar, min 10 & max 300", 1);
-        if(!(is_null($filter) || is_int($filter)) || $filter == 0) throw new \Exception("Harap input Nominal dengan bilangan bulat & minimal 0, eg: 100000", 1);
+        if(!(is_int($filter) && $filter >= 0)) throw new \Exception("Harap input Nominal dengan bilangan bulat & minimal 0, eg: 100000", 1);
         
         // store data
         $this->today = $today;
         $this->user = $user;
         $this->pass = $pass;
-        $this->cookie = "{$this->user}_cookie.txt";
+        $this->cookie = md5($this->user)."_cookie.txt";
 
         $this->from_date = is_null($from_date) ? $this->today : $from_date;
-        $this->to_date = is_null($to_date) ? $this->today : $to_date;
+        $this->to_date = is_null($to_date) ? date('Y-m-d', strtotime($this->from_date.' +31 day')) : $to_date;
         $this->limit = $limit;
         $this->filter = is_null($filter) ? $this->filter : $filter;
     }
@@ -40,24 +42,30 @@ class qris{
             $this->login();
             goto relogin;
         }
+        $dom = new Crawler( $res );
+        $history = $dom->filter("#history > tbody > tr")->each(function (Crawler $node, $i) {
+            return $node->filter("td")->each(function(Crawler $node, $i){
+                return $node->text();
+            });
+        });
 
-        preg_match_all('/<tr><td class="text-center">(\d+)<\/td><td class="text-center">(.*?)<\/td><td class="text-right ">(\d+)<\/td><td class="text-center">(.*?)<\/td><td>(\d+)<\/td><td class="text-center">(.*?)<\/td><td>(.*?)<\/td><td>(.*?)<\/td><\/tr><tr>/',$res,$data,PREG_SET_ORDER,0);
-        
-        $result = [];
-        foreach($data as $qris){
-            $result[] = [
-                'id' => $qris[1],
-                'date' => strtotime($qris[2]),
-                'nominal' => $qris[3],
-                'status' => trim(strip_tags($qris[4])),
-                'inv_id' => $qris[5],
-                'settlement_date' => trim(strip_tags($qris[6])),
-                'origin' => $qris[7],
-                'costumer' => $qris[8],
+        $data = array_map(function($h){
+            if(count($h)<9) return;
+            return [
+                'id' => (int) $h[0],
+                'timestamp' => strtotime($h[1]),
+                'tanggal' => $h[1],
+                'nominal' => (int) $h[2],
+                'status' => trim($h[3]),
+                'inv_id' => (int) $h[4],
+                'tanggal_settlement' => $h[5],
+                'asal_transaksi' => $h[6],
+                'nama_costumer' => $h[7],
+                'rrn' => $h[8],
             ];
-        }
+        }, $history);
         
-        return $result;
+        return array_filter($data);
     }
 
     private function request(){

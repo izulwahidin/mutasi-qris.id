@@ -11,8 +11,11 @@
     ],
     "autoload": {
         "psr-4": {
-            "wahidin\\mutasi\\": "src/"
+            "Wahidin\\Mutasi\\": "src/"
         }
     },
-    "require": {}
+    "require": {
+        "symfony/dom-crawler": "^5.4",
+        "symfony/css-selector": "^5.4"
+    }
 }
