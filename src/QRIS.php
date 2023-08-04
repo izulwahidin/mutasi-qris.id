@@ -2,6 +2,7 @@
 use Symfony\Component\DomCrawler\Crawler;
 
 class Qris{
+    private $base_url = "https://merchant.qris.id";
     private $user, $pass, $cookie, $today, $from_date, $to_date, $limit, $filter;
 
     public function __construct($user, $pass, $filter, $from_date = null, $to_date = null, $limit = 20){
@@ -19,7 +20,8 @@ class Qris{
         $this->today = $today;
         $this->user = $user;
         $this->pass = $pass;
-        $this->cookie = md5($this->user)."_cookie.txt";
+        $this->cookie = md5($this->user.$this->pass)."_cookie.txt";
+        // $this->cookie = 'x';
 
         $this->from_date = is_null($from_date) ? $this->today : $from_date;
         $this->to_date = is_null($to_date) ? date('Y-m-d', strtotime($this->from_date.' +31 day')) : $to_date;
@@ -30,18 +32,18 @@ class Qris{
     public function mutasi(){
         $try = 0;
         relogin:
-        $this->url = 'https://m.qris.id/kontenr.php?idir=pages/historytrx.php';
+        $this->url = "{$this->base_url}/m/kontenr.php?idir=pages/historytrx.php";
         $this->data = $this->filter_data();
 
         $res = $this->request();
         
-        if(!preg_match("/logout/",$res)){
+        if(!preg_match("/Logout/",$res)){
             $try += 1;
             if($try > 3) throw new \Exception("Gagal login setelah 3x percobaan", 1);
-
             $this->login();
             goto relogin;
         }
+
         $dom = new Crawler( $res );
         $history = $dom->filter("#history > tbody > tr")->each(function (Crawler $node, $i) {
             return $node->filter("td")->each(function(Crawler $node, $i){
@@ -90,34 +92,6 @@ class Qris{
         return $result;
     }
 
-    private function login(){
-        $this->url = 'https://m.qris.id/login.php?pgv=go';
-        $this->data = $this->login_data();
-        if(!preg_match('/historytrx/',$this->request())){
-            unlink($this->cookie);
-            throw new \Exception("Tidak dapat login, Harap cek kembali email & password anda", 1);
-        }
-        
-        return true;
-    }
-
-    private function login_data(){
-        $data = <<<data
-            -----------------------------
-            Content-Disposition: form-data; name="username"
-
-            {$this->user}
-            -----------------------------
-            Content-Disposition: form-data; name="password"
-
-            {$this->pass}
-            -----------------------------
-            Content-Disposition: form-data; name="submitBtn"
-        data;
-
-        return preg_replace('/^ +/m','',$data);
-    }
-
     private function filter_data(){
         $data = <<<data
             -----------------------------
@@ -144,5 +118,47 @@ class Qris{
         data;
 
         return preg_replace('/^ +/m','',$data);
+    }
+
+    public function login(){
+        unlink($this->cookie);
+
+        // get token
+        $this->url = "https://merchant.qris.id/m/login.php";
+        unset($this->data);
+        $raw_token = $this->request();
+        preg_match('/name="secret_token" value="(.*?)">/',$raw_token,$secret_token);
+        $secret_token = $secret_token[1];
+
+
+
+        // login
+        $this->url = "https://merchant.qris.id/m/login.php?pgv=go";
+        $this->data =  <<<data
+        -----------------------------
+        Content-Disposition: form-data; name="secret_token"
+        
+        {$secret_token}
+        -----------------------------
+        Content-Disposition: form-data; name="username"
+        
+        {$this->user}
+        -----------------------------
+        Content-Disposition: form-data; name="password"
+        
+        {$this->pass}
+        -----------------------------
+        Content-Disposition: form-data; name="submitBtn"
+        
+        
+        -----------------------------
+        data;
+        $raw_login = $this->request();
+
+        if(preg_match('/\/historytrx\.php/',$raw_login)){
+            return true;
+        }else{
+            throw new \Exception("Tidak dapat login, Harap cek kembali email & password anda", 1);
+        }
     }
 }
