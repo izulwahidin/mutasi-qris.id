@@ -2,7 +2,7 @@
 use Symfony\Component\DomCrawler\Crawler;
 
 class Qris{
-    private $base_url = "https://merchant.qris.id";
+    private $base_url = "https://merchant.qris.interactive.co.id";
     private $user, $pass, $cookie, $today, $from_date, $to_date, $limit, $filter;
 
     public function __construct($user, $pass, $filter, $from_date = null, $to_date = null, $limit = 20){
@@ -124,7 +124,7 @@ class Qris{
         unlink($this->cookie);
 
         // get token
-        $this->url = "https://merchant.qris.id/m/login.php";
+        $this->url = "{$this->base_url}/m/login.php";
         unset($this->data);
         $raw_token = $this->request();
         preg_match('/name="secret_token" value="(.*?)">/',$raw_token,$secret_token);
@@ -133,7 +133,7 @@ class Qris{
 
 
         // login
-        $this->url = "https://merchant.qris.id/m/login.php?pgv=go";
+        $this->url = "{$this->base_url}/m/login.php?pgv=go";
         $this->data =  <<<data
         -----------------------------
         Content-Disposition: form-data; name="secret_token"
