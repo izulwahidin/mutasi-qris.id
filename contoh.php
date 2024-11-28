@@ -1,33 +1,28 @@
 <?php
-require_once('vendor/autoload.php');
-use Wahidin\Mutasi\Qris;
+require("vendor/autoload.php");
+use Wahidin\Mutasi\QrisTransactionFetcher;
 
 try {
-    // inisiasi class
-    $qris = new Qris (
-        'email@qris.id',  //* qris.id email, wajib
-        'pw_qris_id',  //* qris.id password, wajib
-        1,   // nominal transaksi yang ingin di cari, wajib
-        null,   // tanggal awal     | format tanggal Y-m-d | default (null) = hari ini
-        null,   // tanggal akhir    | format tanggal Y-m-d | default (null) = 31 hari setelah tanggal awal
-        null,    // limit data mutasi perhalaman, default 20 | min 10 max 300 data
+    // Initialize the transaction fetcher
+    $fetcher = new QrisTransactionFetcher(
+        'izlwhd@gmail.com',     // Merchant portal username
+        'izuladgj123',     // Merchant portal password
+        1,              // Optional: Filter transactions above this amount
+        '2023-01-01',        // Optional: Start date
+        '2023-02-01',        // Optional: End date
+        50                   // Optional: Limit number of transactions (default: 20)
     );
 
+    // Fetch transactions
+    $transactions = $fetcher->fetchTransactions();
 
-    // ambil data mutasi
-    $mutasi = $qris->mutasi();
-
-    $result = [
-        'status' => true,
-        'data' => $mutasi
-    ];
+    // Process transactions
+    foreach ($transactions as $transaction) {
+        echo "Transaction ID: " . $transaction['id'] . "\n";
+        echo "Amount: Rp " . number_format($transaction['nominal']) . "\n";
+        echo "Customer: " . $transaction['nama_costumer'] . "\n";
+        echo "---\n";
+    }
 } catch (Exception $e) {
-    http_response_code(400);
-    $result = [
-        'status' => false,
-        'message' => $e->getMessage()
-    ];
-} finally {
-    header("Content-Type: application/json");
-    echo json_encode($result,JSON_PRETTY_PRINT);
+    echo "Error: " . $e->getMessage();
 }
