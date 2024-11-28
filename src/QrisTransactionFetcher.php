@@ -17,22 +17,12 @@ class QrisTransactionFetcher
     private string $password;
     private string $cookieFile;
     private string $url;
-    private ?array $postData = null;
+    private ?string $postData = null;
     private string $fromDate;
     private string $toDate;
     private int $limit;
     private ?int $filter;
 
-    /**
-     * Constructor for QrisTransactionFetcher
-     *
-     * @param string $username Merchant username
-     * @param string $password Merchant password
-     * @param int|null $filter Transaction amount filter
-     * @param string|null $fromDate Start date for transactions
-     * @param string|null $toDate End date for transactions
-     * @param int $limit Maximum number of transactions to fetch
-     */
     public function __construct(
         string $username, 
         string $password, 
@@ -54,11 +44,6 @@ class QrisTransactionFetcher
         $this->filter = $filter;
     }
 
-    /**
-     * Validate input parameters
-     *
-     * @throws InvalidArgumentException If inputs are invalid
-     */
     private function validateInputs(
         string $username, 
         string $password, 
@@ -90,19 +75,13 @@ class QrisTransactionFetcher
         }
     }
 
-    /**
-     * Fetch transaction history
-     *
-     * @return array Parsed transaction data
-     * @throws RuntimeException If login fails
-     */
     public function fetchTransactions(): array
     {
         $maxLoginAttempts = 3;
         
         for ($attempt = 1; $attempt <= $maxLoginAttempts; $attempt++) {
             $this->url = self::BASE_URL . "/m/kontenr.php?idir=pages/historytrx.php";
-            $this->postData = $this->prepareFilterData();
+            $this->postData = $this->prepareMultipartFilterData();
 
             $response = $this->sendRequest();
             
@@ -116,11 +95,6 @@ class QrisTransactionFetcher
         throw new RuntimeException("Failed to login after {$maxLoginAttempts} attempts");
     }
 
-    /**
-     * Login to QRIS merchant portal
-     *
-     * @throws RuntimeException If login fails
-     */
     private function login(): void
     {
         // Remove existing cookie file
@@ -138,7 +112,7 @@ class QrisTransactionFetcher
 
         // Perform login
         $this->url = self::BASE_URL . "/m/login.php?pgv=go";
-        $this->postData = $this->prepareLoginData($secretToken);
+        $this->postData = $this->prepareMultipartLoginData($secretToken);
         $loginResponse = $this->sendRequest();
 
         if (!str_contains($loginResponse, '/historytrx.php')) {
@@ -146,11 +120,6 @@ class QrisTransactionFetcher
         }
     }
 
-    /**
-     * Send HTTP request using cURL
-     *
-     * @return string Response from the server
-     */
     private function sendRequest(): string
     {
         $ch = curl_init();
@@ -171,78 +140,61 @@ class QrisTransactionFetcher
         }
 
         $result = curl_exec($ch);
+        
+        if ($result === false) {
+            throw new RuntimeException("cURL error: " . curl_error($ch));
+        }
+
         curl_close($ch);
 
-        return $result ?: '';
+        return $result;
     }
 
-    /**
-     * Prepare filter data for transaction request
-     *
-     * @return string Formatted multipart form data
-     */
-    private function prepareFilterData(): string
+    private function prepareMultipartFilterData(): string
     {
-        return implode("\r\n", [
-            '-----------------------------',
-            'Content-Disposition: form-data; name="datexbegin"',
-            '',
-            $this->fromDate,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="datexend"',
-            '',
-            $this->toDate,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="limitasidata"',
-            '',
-            $this->limit,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="searchtxt"',
-            '',
-            $this->filter ?? '',
-            '-----------------------------',
-            'Content-Disposition: form-data; name="Filter"',
-            '',
-            'Filter',
-            '-------------------------------'
-        ]);
+        $boundary = '---------------------------' . uniqid();
+        $body = '';
+
+        $fields = [
+            'datexbegin' => $this->fromDate,
+            'datexend' => $this->toDate,
+            'limitasidata' => (string)$this->limit,
+            'searchtxt' => (string)($this->filter ?? ''),
+            'Filter' => 'Filter'
+        ];
+
+        foreach ($fields as $key => $value) {
+            $body .= "--{$boundary}\r\n";
+            $body .= "Content-Disposition: form-data; name=\"{$key}\"\r\n\r\n";
+            $body .= $value . "\r\n";
+        }
+
+        $body .= "--{$boundary}--\r\n";
+        return $body;
     }
 
-    /**
-     * Prepare login data with secret token
-     *
-     * @param string $secretToken Secret token from login page
-     * @return string Formatted multipart form data
-     */
-    private function prepareLoginData(string $secretToken): string
+    private function prepareMultipartLoginData(string $secretToken): string
     {
-        return implode("\r\n", [
-            '-----------------------------',
-            'Content-Disposition: form-data; name="secret_token"',
-            '',
-            $secretToken,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="username"',
-            '',
-            $this->username,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="password"',
-            '',
-            $this->password,
-            '-----------------------------',
-            'Content-Disposition: form-data; name="submitBtn"',
-            '',
-            '',
-            '-----------------------------'
-        ]);
+        $boundary = '---------------------------' . uniqid();
+        $body = '';
+
+        $fields = [
+            'secret_token' => $secretToken,
+            'username' => $this->username,
+            'password' => $this->password,
+            'submitBtn' => ''
+        ];
+
+        foreach ($fields as $key => $value) {
+            $body .= "--{$boundary}\r\n";
+            $body .= "Content-Disposition: form-data; name=\"{$key}\"\r\n\r\n";
+            $body .= $value . "\r\n";
+        }
+
+        $body .= "--{$boundary}--\r\n";
+        return $body;
     }
 
-    /**
-     * Parse transaction data from HTML response
-     *
-     * @param string $response HTML response from server
-     * @return array Parsed transaction data
-     */
     private function parseTransactions(string $response): array
     {
         $dom = new Crawler($response);
