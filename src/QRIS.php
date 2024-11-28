@@ -1,164 +1,272 @@
-<?php namespace Wahidin\Mutasi;
+<?php
+
+namespace Wahidin\Mutasi;
+
 use Symfony\Component\DomCrawler\Crawler;
+use InvalidArgumentException;
+use RuntimeException;
 
-class Qris{
-    private $base_url = "https://merchant.qris.interactive.co.id";
-    private $user, $pass, $cookie, $today, $from_date, $to_date, $limit, $filter;
+class QrisTransactionFetcher
+{
+    private const BASE_URL = "https://merchant.qris.interactive.co.id";
+    private const MIN_LIMIT = 10;
+    private const MAX_LIMIT = 300;
+    private const DATE_PATTERN = '/^\d{4}-\d{2}-\d{2}$/';
 
-    public function __construct($user, $pass, $filter, $from_date = null, $to_date = null, $limit = 20){
-        $today = date('Y-m-d',strtotime('today'));
+    private string $username;
+    private string $password;
+    private string $cookieFile;
+    private string $url;
+    private ?array $postData = null;
+    private string $fromDate;
+    private string $toDate;
+    private int $limit;
+    private ?int $filter;
 
-        // check data
-        if(
-            !(is_null($from_date)   || (bool) preg_match('/\d{4,}-\d{2,}-\d{2,}/',$from_date)) || 
-            !(is_null($to_date)     || (bool) preg_match('/\d{4,}-\d{2,}-\d{2,}/',$to_date))
-        ) throw new \Exception("Harap input tanggal dengan format yang benar.\neg: {$today}", 1);
-        if(is_int($limit) && !($limit >= 10 && $limit <=300)) throw new \Exception("Harap input limit dengan benar, min 10 & max 300", 1);
-        if(!(is_int($filter) && $filter >= 0)) throw new \Exception("Harap input Nominal dengan bilangan bulat & minimal 0, eg: 100000", 1);
-        
-        // store data
-        $this->today = $today;
-        $this->user = $user;
-        $this->pass = $pass;
-        $this->cookie = md5($this->user.$this->pass)."_cookie.txt";
-        // $this->cookie = 'x';
+    /**
+     * Constructor for QrisTransactionFetcher
+     *
+     * @param string $username Merchant username
+     * @param string $password Merchant password
+     * @param int|null $filter Transaction amount filter
+     * @param string|null $fromDate Start date for transactions
+     * @param string|null $toDate End date for transactions
+     * @param int $limit Maximum number of transactions to fetch
+     */
+    public function __construct(
+        string $username, 
+        string $password, 
+        ?int $filter, 
+        ?string $fromDate = null, 
+        ?string $toDate = null, 
+        int $limit = 20
+    ) {
+        $this->validateInputs($username, $password, $filter, $fromDate, $toDate, $limit);
 
-        $this->from_date = is_null($from_date) ? $this->today : $from_date;
-        $this->to_date = is_null($to_date) ? date('Y-m-d', strtotime($this->from_date.' +31 day')) : $to_date;
+        $today = date('Y-m-d');
+        $this->username = $username;
+        $this->password = $password;
+        $this->cookieFile = md5($username . $password) . "_cookie.txt";
+
+        $this->fromDate = $fromDate ?? $today;
+        $this->toDate = $toDate ?? date('Y-m-d', strtotime($this->fromDate . ' +31 day'));
         $this->limit = $limit;
-        $this->filter = is_null($filter) ? $this->filter : $filter;
+        $this->filter = $filter;
     }
 
-    public function mutasi(){
-        $try = 0;
-        relogin:
-        $this->url = "{$this->base_url}/m/kontenr.php?idir=pages/historytrx.php";
-        $this->data = $this->filter_data();
-
-        $res = $this->request();
-        
-        if(!preg_match("/Logout/",$res)){
-            $try += 1;
-            if($try > 3) throw new \Exception("Gagal login setelah 3x percobaan", 1);
-            $this->login();
-            goto relogin;
+    /**
+     * Validate input parameters
+     *
+     * @throws InvalidArgumentException If inputs are invalid
+     */
+    private function validateInputs(
+        string $username, 
+        string $password, 
+        ?int $filter, 
+        ?string $fromDate, 
+        ?string $toDate, 
+        int $limit
+    ): void {
+        if (empty($username) || empty($password)) {
+            throw new InvalidArgumentException("Username and password are required.");
         }
 
-        $dom = new Crawler( $res );
-        $history = $dom->filter("#history > tbody > tr")->each(function (Crawler $node, $i) {
-            return $node->filter("td")->each(function(Crawler $node, $i){
-                return $node->text();
-            });
-        });
+        if ($fromDate !== null && !preg_match(self::DATE_PATTERN, $fromDate)) {
+            throw new InvalidArgumentException("Invalid from date format. Use YYYY-MM-DD.");
+        }
 
-        $data = array_map(function($h){
-            if(count($h)<9) return;
-            return [
-                'id' => (int) $h[0],
-                'timestamp' => strtotime($h[1]),
-                'tanggal' => $h[1],
-                'nominal' => (int) $h[2],
-                'status' => trim($h[3]),
-                'inv_id' => (int) $h[4],
-                'tanggal_settlement' => $h[5],
-                'asal_transaksi' => $h[6],
-                'nama_costumer' => $h[7],
-                'rrn' => $h[8],
-            ];
-        }, $history);
-        
-        return array_filter($data);
+        if ($toDate !== null && !preg_match(self::DATE_PATTERN, $toDate)) {
+            throw new InvalidArgumentException("Invalid to date format. Use YYYY-MM-DD.");
+        }
+
+        if ($limit < self::MIN_LIMIT || $limit > self::MAX_LIMIT) {
+            throw new InvalidArgumentException(
+                "Limit must be between " . self::MIN_LIMIT . " and " . self::MAX_LIMIT
+            );
+        }
+
+        if ($filter !== null && $filter < 0) {
+            throw new InvalidArgumentException("Filter amount must be a non-negative integer.");
+        }
     }
 
-    private function request(){
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $this->url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
-        curl_setopt($ch, CURLOPT_COOKIEJAR, $this->cookie );
-        curl_setopt($ch, CURLOPT_COOKIEFILE, $this->cookie );
+    /**
+     * Fetch transaction history
+     *
+     * @return array Parsed transaction data
+     * @throws RuntimeException If login fails
+     */
+    public function fetchTransactions(): array
+    {
+        $maxLoginAttempts = 3;
         
-        if(isset($this->data)){
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $this->data);
-            $headers = array();
-            $headers[] = 'Content-Type: multipart/form-data; boundary=---------------------------';
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        for ($attempt = 1; $attempt <= $maxLoginAttempts; $attempt++) {
+            $this->url = self::BASE_URL . "/m/kontenr.php?idir=pages/historytrx.php";
+            $this->postData = $this->prepareFilterData();
+
+            $response = $this->sendRequest();
+            
+            if (str_contains($response, 'Logout')) {
+                return $this->parseTransactions($response);
+            }
+
+            $this->login();
+        }
+
+        throw new RuntimeException("Failed to login after {$maxLoginAttempts} attempts");
+    }
+
+    /**
+     * Login to QRIS merchant portal
+     *
+     * @throws RuntimeException If login fails
+     */
+    private function login(): void
+    {
+        // Remove existing cookie file
+        if (file_exists($this->cookieFile)) {
+            unlink($this->cookieFile);
+        }
+
+        // Fetch login page to get secret token
+        $this->url = self::BASE_URL . "/m/login.php";
+        $this->postData = null;
+        $rawToken = $this->sendRequest();
+
+        preg_match('/name="secret_token" value="(.*?)">/', $rawToken, $matches);
+        $secretToken = $matches[1] ?? throw new RuntimeException("Could not extract secret token");
+
+        // Perform login
+        $this->url = self::BASE_URL . "/m/login.php?pgv=go";
+        $this->postData = $this->prepareLoginData($secretToken);
+        $loginResponse = $this->sendRequest();
+
+        if (!str_contains($loginResponse, '/historytrx.php')) {
+            throw new RuntimeException("Login failed. Please check your credentials.");
+        }
+    }
+
+    /**
+     * Send HTTP request using cURL
+     *
+     * @return string Response from the server
+     */
+    private function sendRequest(): string
+    {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $this->url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_COOKIEJAR => $this->cookieFile,
+            CURLOPT_COOKIEFILE => $this->cookieFile
+        ]);
+
+        if ($this->postData !== null) {
+            curl_setopt_array($ch, [
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $this->postData,
+                CURLOPT_HTTPHEADER => ['Content-Type: multipart/form-data; boundary=---------------------------']
+            ]);
         }
 
         $result = curl_exec($ch);
         curl_close($ch);
 
-        return $result;
+        return $result ?: '';
     }
 
-    private function filter_data(){
-        $data = <<<data
-            -----------------------------
-            Content-Disposition: form-data; name="datexbegin"
-
-            {$this->from_date}
-            -----------------------------
-            Content-Disposition: form-data; name="datexend"
-
-            {$this->to_date}
-            -----------------------------
-            Content-Disposition: form-data; name="limitasidata"
-
-            {$this->limit}
-            -----------------------------
-            Content-Disposition: form-data; name="searchtxt"
-
-            {$this->filter}
-            -----------------------------
-            Content-Disposition: form-data; name="Filter"
-
-            Filter
-            -------------------------------
-        data;
-
-        return preg_replace('/^ +/m','',$data);
+    /**
+     * Prepare filter data for transaction request
+     *
+     * @return string Formatted multipart form data
+     */
+    private function prepareFilterData(): string
+    {
+        return implode("\r\n", [
+            '-----------------------------',
+            'Content-Disposition: form-data; name="datexbegin"',
+            '',
+            $this->fromDate,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="datexend"',
+            '',
+            $this->toDate,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="limitasidata"',
+            '',
+            $this->limit,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="searchtxt"',
+            '',
+            $this->filter ?? '',
+            '-----------------------------',
+            'Content-Disposition: form-data; name="Filter"',
+            '',
+            'Filter',
+            '-------------------------------'
+        ]);
     }
 
-    public function login(){
-        unlink($this->cookie);
+    /**
+     * Prepare login data with secret token
+     *
+     * @param string $secretToken Secret token from login page
+     * @return string Formatted multipart form data
+     */
+    private function prepareLoginData(string $secretToken): string
+    {
+        return implode("\r\n", [
+            '-----------------------------',
+            'Content-Disposition: form-data; name="secret_token"',
+            '',
+            $secretToken,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="username"',
+            '',
+            $this->username,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="password"',
+            '',
+            $this->password,
+            '-----------------------------',
+            'Content-Disposition: form-data; name="submitBtn"',
+            '',
+            '',
+            '-----------------------------'
+        ]);
+    }
 
-        // get token
-        $this->url = "{$this->base_url}/m/login.php";
-        unset($this->data);
-        $raw_token = $this->request();
-        preg_match('/name="secret_token" value="(.*?)">/',$raw_token,$secret_token);
-        $secret_token = $secret_token[1];
+    /**
+     * Parse transaction data from HTML response
+     *
+     * @param string $response HTML response from server
+     * @return array Parsed transaction data
+     */
+    private function parseTransactions(string $response): array
+    {
+        $dom = new Crawler($response);
+        $history = $dom->filter("#history > tbody > tr")->each(function (Crawler $node) {
+            return $node->filter("td")->each(fn(Crawler $node) => $node->text());
+        });
 
+        return array_filter(array_map(function($transaction) {
+            if (count($transaction) < 9) {
+                return null;
+            }
 
-
-        // login
-        $this->url = "{$this->base_url}/m/login.php?pgv=go";
-        $this->data =  <<<data
-        -----------------------------
-        Content-Disposition: form-data; name="secret_token"
-        
-        {$secret_token}
-        -----------------------------
-        Content-Disposition: form-data; name="username"
-        
-        {$this->user}
-        -----------------------------
-        Content-Disposition: form-data; name="password"
-        
-        {$this->pass}
-        -----------------------------
-        Content-Disposition: form-data; name="submitBtn"
-        
-        
-        -----------------------------
-        data;
-        $raw_login = $this->request();
-
-        if(preg_match('/\/historytrx\.php/',$raw_login)){
-            return true;
-        }else{
-            throw new \Exception("Tidak dapat login, Harap cek kembali email & password anda", 1);
-        }
+            return [
+                'id' => (int) $transaction[0],
+                'timestamp' => strtotime($transaction[1]),
+                'tanggal' => $transaction[1],
+                'nominal' => (int) $transaction[2],
+                'status' => trim($transaction[3]),
+                'inv_id' => (int) $transaction[4],
+                'tanggal_settlement' => $transaction[5],
+                'asal_transaksi' => $transaction[6],
+                'nama_costumer' => $transaction[7],
+                'rrn' => $transaction[8],
+            ];
+        }, $history));
     }
 }
